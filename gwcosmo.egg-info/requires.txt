@@ -1,0 +1,5 @@
+numpy>=1.9
+matplotlib>=2.0
+pandas
+scipy
+tqdm

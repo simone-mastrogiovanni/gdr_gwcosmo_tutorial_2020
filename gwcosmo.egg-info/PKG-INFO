@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: gwcosmo
+Version: 0.1.0
+Summary: A package to estimate cosmological parameters using gravitational-wave observations
+Home-page: https://git.ligo.org/cbc-cosmo/gwcosmo
+Author: Cosmology R&D Group
+Author-email: cbc+cosmo@ligo.org
+License: GNU
+Description: UNKNOWN
+Platform: UNKNOWN

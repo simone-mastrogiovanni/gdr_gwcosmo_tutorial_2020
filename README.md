@@ -21,7 +21,7 @@ if you want to go back to your main Python distribution, just close and open the
 ```
 pip install -r requirements.txt
 ```
-* Now we are ready to install gwcosmo by running
+* Now we are ready to install gwcosmo by running, go inside the gwcosmo folder and run 
 ```
-python gwcosmo/setup.py install
+python setup.py install
 ```
