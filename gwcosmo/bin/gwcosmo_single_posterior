@@ -1,0 +1,363 @@
+#!/usr/bin/env python
+"""
+This script computes H0 as a function of H0 bins.
+Ignacio Magana, Rachel Gray, Ankan Sur
+"""
+# System imports
+import pkg_resources
+import os
+import sys
+from optparse import Option, OptionParser
+import pickle
+import multiprocessing as mp
+
+#Global Imports
+import matplotlib
+matplotlib.use('agg')
+import matplotlib.pyplot as plt
+matplotlib.rcParams['font.family']= 'Times New Roman'
+matplotlib.rcParams['font.sans-serif']= ['Bitstream Vera Sans']
+matplotlib.rcParams['text.usetex']= True
+matplotlib.rcParams['mathtext.fontset']= 'stixsans'
+
+import seaborn as sns
+sns.set_context('paper')
+sns.set_style('ticks')
+sns.set_palette('colorblind')
+
+import numpy as np
+
+import gwcosmo
+from gwcosmo.utilities.posterior_utilities import confidence_interval
+from gwcosmo.utilities.redshift_utilities import zhelio_to_zcmb
+
+import astropy.constants as const
+speed_of_light = const.c.to('km/s').value
+data_path = pkg_resources.resource_filename('gwcosmo', 'data/')
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+# Command line options
+parser = OptionParser(
+    description = __doc__,
+    usage = "%prog [options]",
+    option_list = [
+        Option("--method", default=None,
+            help="Select counterpart, statistical, population (required)"),
+        Option("--min_H0", default='20.0', type=float,
+            help="Set minimum value of H0 Posterior"),
+        Option("--max_H0", default='200.0', type=float,
+            help="Set maximum value of H0 Posterior"),
+        Option("--bins_H0", default='200', type=int,
+            help="Set number of H0 Posterior bins"),
+        Option("--posterior_samples", default=None,
+            help="LALinference posterior samples file in format (.dat or hdf5) or use GW170817, GW170814, GW170818"),
+        Option("--mass_distribution", default=None,
+            help="Choose between BNS, NSBH or BBH mass distributions for Pdet calculation."),
+        Option("--powerlaw_slope", default='1.6', type=float,
+            help="Set powerlaw slope for BBH powelaw mass distribution for Pdet calculation."),
+        Option("--minimum_mass", default='5.0', type=float,
+            help="Set minimum mass in the source fram for BBH powerlaw mass distribution (default is 5)."),
+        Option("--maximum_mass", default='100.0', type=float,
+            help="Set maximum mass in the source fram for BBH powerlaw mass distribution (default is 100)."),
+        Option("--skymap", default=None,
+            help="LALinference 3D skymap file in format (.fits)"),
+        Option("--galaxy_catalog", default=None,
+            help="Load galaxy catalog in pickle format"),
+        Option("--psd", default=None,
+            help="Select between 'O1' and 'O2' PSDs, by default we use aLIGO at design sensitivity (default=None)."),
+        Option("--galaxy_weighting", default='False',
+            help="Set galaxy catalog weighting"),
+        Option("--catalog_band", default='B', type=str,
+            help = "choose between a 'B' band or a 'K' band catalog"),
+        Option("--completion", default='False',
+            help="Assumes a complete catalog."),
+        Option("--uncertainty", default='True',
+            help="Apply redshift uncertainties."),
+        Option("--linear_cosmology", default='False',
+            help="Assume a linear cosmology."),
+        Option("--basic_pdet", default='False',
+            help="Allow for masses to be redshifted in Pdet using False."),
+        Option("--counterpart", default=None,
+            help="Provide EM counterpart pickle catalog for counterpart case, else provide individual arguments."),
+        Option("--counterpart_ra", default=None,
+            help="Right ascension of counterpart"),
+        Option("--counterpart_dec", default=None,
+            help="Declination of counterpart"),
+        Option("--counterpart_z", default=None,
+            help="Redshift of counterpart or recessional velocity in km/sec (in heliocentric frame)"),
+        Option("--counterpart_v", default=None,
+            help="Peculiar velocity correction of counterpart in km/sec or unitless redshift"),
+        Option("--rate_evolution", default='constant',
+            help="Set rate evolution: constant or evolving"),
+        Option("--Lambda", default='3.0', type=float,
+            help="Set rate evolution parameter Lambda"),
+        Option("--new_skypatch", default='True',
+            help="Use the new skypatch method which only utilises the catalog within the event's sky area"),
+        Option("--full_waveform", default='True',
+            help="Use detection probability calculated using full waveforms (default=True) otherwise just use the inspiral part \
+                (only use full_waveform = False for O2-H0 backwards compatibility"),
+        Option("--Kcorrections", default='False',
+            help="Apply K-corrections."),
+        Option("--reweight", default='True',
+            help="Reweight samples to pop model."),
+        Option("--outputfile", default='Posterior',
+            help="Name of output file"),
+        Option("--plot", default=None,
+            help="Plot .npz file"),
+        Option("--snr", default='12.0', type=float,
+            help="Network SNR threshold.")
+    ])
+opts, args = parser.parse_args()
+print(opts)
+
+# Check for missing required arguments
+missing = []
+for option in parser.option_list:
+    if 'required' in option.help and eval('opts.' + option.dest) == None:
+        missing.extend(option._long_opts)
+if len(missing) > 0:
+    parser.error('Missing required options: {0}'.format(str(missing)))
+
+print('Selected method is:', opts.method)
+if opts.plot is not None:
+    filename = str(opts.plot)
+    data = np.load(filename)['arr_0']
+    H0 = data[0]
+    min_H0 = min(H0)
+    max_H0 = max(H0)
+    dH0 = H0[1]-H0[0]
+    prior_uniform = gwcosmo.prior.priors.pH0(H0,prior='uniform')
+    prior_log = gwcosmo.prior.priors.pH0(H0,prior='log')
+    prior_uniform_norm = prior_uniform/np.sum(prior_uniform*dH0)
+    prior_log_norm = prior_log/np.sum(prior_log*dH0)
+    posterior_uniform_norm = data[2]
+    posterior_log_norm = data[3]
+    outputfile = filename[:-4]
+
+else:
+    if (opts.posterior_samples is None and opts.skymap is None):
+        parser.error('Provide either posterior samples or skymap.')
+
+    if opts.mass_distribution is None:
+        parser.error('Provide a mass distribution to use for Pdet calculation.')
+
+    if (opts.galaxy_catalog is None and opts.method == 'statistical'):
+        parser.error('The statistical method requires a galaxy catalog. Please provide one.')
+
+    if opts.psd is None:
+        parser.error('Please provide a PSD.')
+
+    if opts.posterior_samples is not None:
+        posterior_samples = str(opts.posterior_samples)
+
+    if opts.skymap is not None:
+        skymap = str(opts.skymap)
+
+    if opts.mass_distribution is not None:
+        mass_distribution = str(opts.mass_distribution)
+
+    if opts.galaxy_catalog is not None:
+        galaxy_catalog = str(opts.galaxy_catalog)
+
+    if opts.method == 'statistical':
+        galaxy_weighting = str2bool(opts.galaxy_weighting)
+        completion = str2bool(opts.completion)
+
+    if opts.method == 'counterpart':
+        galaxy_weighting = False
+        completion = True
+        if (opts.counterpart is not None and opts.counterpart[-5:] == '.hdf5'):
+            counterpart = gwcosmo.prior.catalog.galaxyCatalog(catalog_file=opts.counterpart)
+        else:
+            if opts.counterpart_ra is not None:
+                counterpart_ra = float(opts.counterpart_ra)
+            if opts.counterpart_dec is not None:
+                counterpart_dec = float(opts.counterpart_dec)
+            if opts.counterpart_z is not None:
+                counterpart_z = float(opts.counterpart_z)
+            if opts.counterpart_v is not None:
+                counterpart_v = float(opts.counterpart_v)
+
+    # Set command line arguments
+    min_H0 = float(opts.min_H0)
+    max_H0 = float(opts.max_H0)
+    bins_H0 = float(opts.bins_H0)
+
+    uncertainty = str2bool(opts.uncertainty)
+    linear = str2bool(opts.linear_cosmology)
+    basic = str2bool(opts.basic_pdet)
+    rate_evolution = str(opts.rate_evolution)
+    Lambda = float(opts.Lambda)
+    psd = str(opts.psd)
+    alpha = float(opts.powerlaw_slope)
+    mmin = float(opts.minimum_mass)
+    mmax = float(opts.maximum_mass)
+    Nsamps = 20000
+    new_skypatch=str2bool(opts.new_skypatch)
+    band = str(opts.catalog_band)
+    full_waveform=str2bool(opts.full_waveform)
+    Kcorr = str2bool(opts.Kcorrections)
+    reweight = str2bool(opts.reweight)
+    network_snr_threshold = float(opts.snr)
+    population_params = dict(mass_distribution=mass_distribution,alpha=alpha,mmin=mmin,mmax=mmax,Lambda=Lambda)
+
+    options_string = opts.method
+    outputfile = str(opts.outputfile)
+
+    "Compute P(H0)"
+    H0 = np.linspace(min_H0, max_H0, bins_H0)
+    dH0 = H0[1] - H0[0]
+
+    if opts.posterior_samples is not None:
+        print("Loading posterior samples.")
+        samples = gwcosmo.likelihood.posterior_samples.posterior_samples(posterior_samples)
+
+        if opts.skymap is not None:
+            print("Loading 2D skymap.")
+            skymap = gwcosmo.likelihood.skymap.skymap(skymap)
+
+    if opts.posterior_samples is None:
+        print("Loading 3D skymap.")
+        skymap = gwcosmo.likelihood.skymap.skymap(skymap)
+        samples = None
+
+    if opts.method == 'statistical':
+        if galaxy_catalog[-5:] == '.hdf5':
+            catalog = gwcosmo.prior.catalog.galaxyCatalog(catalog_file=galaxy_catalog,band=band,Kcorr=Kcorr)
+            print("Using "+str(band)+"-band maggies.")
+        else:
+            print('Not a compatible catalog.')
+
+        counterpart = None
+        population = False
+
+    if opts.method == 'population':
+        population = True
+        new_skypatch = False
+        galaxy_weighting = False
+        completion = False
+        catalog = None
+        counterpart = None
+
+    if (opts.method == "counterpart" and opts.counterpart is None):
+        catalog = None
+        counterpart = gwcosmo.prior.catalog.galaxy()
+        if (opts.counterpart_ra is None or
+            opts.counterpart_dec is None or
+            opts.counterpart_z is None):
+            parser.error('The counterpart method requires the ra, dec, and z of the galaxy.')
+        else:
+            counterpart.ra = counterpart_ra*np.pi/180.
+            counterpart.dec = counterpart_dec*np.pi/180.
+            if (counterpart_z > 0) & (counterpart_z < 3):
+                counterpart.z = counterpart_z 
+            else:
+                counterpart.z = counterpart_z/speed_of_light
+
+            if (counterpart_v > 0) & (counterpart_v < 1):
+                counterpart.sigmaz = counterpart_v
+            else:
+                counterpart.sigmaz = counterpart_v/speed_of_light
+            population = False
+
+    elif (opts.method == "counterpart" and opts.counterpart is not None):
+        catalog = None
+        population = False
+
+    if full_waveform is True:
+        kind = 'full_waveform'
+    else:
+        kind = 'inspiral'
+
+    if mass_distribution == 'BBH-powerlaw':
+
+        pdet_path = data_path + '{}PSD_{}_alpha_{}_Mmin_{}_Mmax_{}_Nsamps{}_{}_snr_{}.p'.format(psd, mass_distribution, alpha, mmin, mmax, Nsamps, kind,network_snr_threshold)
+        print(pdet_path)
+        if os.path.isfile(pdet_path) is True:
+            pdet = pickle.load(open(pdet_path, 'rb'))
+            print('Loading precomputed pdet with a {} mass distribution (alpha = {}) at {} sensitivity using the {}'.format(mass_distribution, alpha, psd, kind))
+        else:
+            print('Calculating detection probability from scratch. This will take a while... Consider using a precomputed one for speed.')
+            pdet = gwcosmo.detection_probability.DetectionProbability(mass_distribution=mass_distribution,asd=psd,
+                                                                      basic=basic,full_waveform=full_waveform,H0=H0,network_snr_threshold=network_snr_threshold)
+
+    if (mass_distribution == 'BNS' or mass_distribution == 'NSBH'):
+        pdet_path = data_path + '{}PSD_{}_Nsamps{}_{}_snr_{}.p'.format(psd, mass_distribution, Nsamps, kind,network_snr_threshold)
+        if os.path.isfile(pdet_path) is True:
+            pdet = pickle.load(open(pdet_path, 'rb'))
+            print('Loading precomputed pdet with a {} mass distribution at {} sensitivity.'.format(mass_distribution, psd))
+
+    me = gwcosmo.gwcosmo.gwcosmoLikelihood(
+        H0,samples,skymap,catalog,pdet,reweight=reweight,EM_counterpart=counterpart,
+        linear=linear,weighted=galaxy_weighting,uncertainty=uncertainty,basic=basic,
+        rate=rate_evolution,population_params=population_params,Kcorr=Kcorr)
+
+    likelihood_original,pxG,pDG,pGD,catalog_fraction,pxnG,pDnG,pnGD,pxnG_rest_of_sky,pDnG_rest_of_sky,rest_fraction = me.likelihood(H0,complete=completion,counterpart_case='direct',new_skypatch=new_skypatch,population=population)
+
+    likelihood = np.array(likelihood_original)/np.sum(np.array(likelihood_original)*dH0)
+
+    prior_uniform = gwcosmo.prior.priors.pH0(H0,prior='uniform')
+    posterior_uniform = prior_uniform*likelihood
+    prior_log = gwcosmo.prior.priors.pH0(H0,prior='log')
+    posterior_log= prior_log*likelihood
+
+    prior_uniform_norm = prior_uniform/np.sum(prior_uniform*dH0)
+    posterior_uniform_norm = posterior_uniform/np.sum(posterior_uniform*dH0)
+    prior_log_norm = prior_log/np.sum(prior_log*dH0)
+    posterior_log_norm = posterior_log/np.sum(posterior_log*dH0)
+
+    np.savez(outputfile+'.npz',[H0,likelihood,posterior_uniform_norm,posterior_log_norm,opts])
+    np.savez(outputfile+'_likelihood_breakdown.npz',[H0,likelihood_original, pxG,pDG,pGD,catalog_fraction, pxnG,pDnG,pnGD,pxnG_rest_of_sky,pDnG_rest_of_sky,rest_fraction])
+
+print("Uniform Prior")
+confidence_uniform = confidence_interval(posterior_uniform_norm,H0,level=0.683)
+MAP_uniform = confidence_uniform.map
+a_uniform = confidence_uniform.lower_level
+b_uniform = confidence_uniform.upper_level
+print('H0 = %.0f + %.0f - %.0f (MAP and 68.3 percent HDI)' %(MAP_uniform,b_uniform-MAP_uniform,MAP_uniform-a_uniform))
+
+print("Log Prior")
+confidence_log = confidence_interval(posterior_log_norm,H0,level=0.683)
+MAP_log = confidence_log.map
+a_log = confidence_log.lower_level
+b_log = confidence_log.upper_level
+print('H0 = %.0f + %.0f - %.0f (MAP and 68.3 percent HDI)' %(MAP_log,b_log-MAP_log,MAP_log-a_log))
+
+ymin = 0
+ymax = 1.1*max(posterior_log_norm)
+planck_h = 0.6774*100
+sigma_planck_h = 0.0062*100
+riess_h = 0.7324*100
+sigma_riess_h = 0.0174*100
+
+c=sns.color_palette('colorblind')
+plt.figure()
+plt.axvline(planck_h,label='Planck',color=c[4])
+plt.fill_betweenx([ymin,ymax],planck_h-2*sigma_planck_h,planck_h+2*sigma_planck_h,color=c[4],alpha=0.2)
+plt.axvline(riess_h,label='SH0ES',color=c[2])
+plt.fill_betweenx([ymin,ymax],riess_h-2*sigma_riess_h,riess_h+2*sigma_riess_h,color=c[2],alpha=0.2)
+plt.axvline(70,ls='--', color='k',alpha=0.8, label = r'$H_0 = 70$ (km s$^{-1}$ Mpc$^{-1}$)')
+plt.plot(H0,posterior_uniform_norm, linewidth = 3.0, label='Posterior (Uniform)',c=c[0])
+plt.axvline(a_uniform,ls='--',c=c[0])
+plt.axvline(b_uniform,ls='--',c=c[0])
+plt.plot(H0,posterior_log_norm,linewidth = 3.0, label='Posterior (Log)',c=c[1])
+plt.axvline(a_log,ls='--',c=c[1])
+plt.axvline(b_log,ls='--',c=c[1])
+plt.plot(H0,prior_uniform_norm,ls=':', linewidth = 3.0, label='Prior (Uniform)',c=c[0],alpha=0.6)
+plt.plot(H0,prior_log_norm,ls=':', linewidth = 3.0, label='Prior (Log)',c=c[1],alpha=0.6)
+plt.xlim(min_H0,max_H0)
+plt.ylim(ymin,ymax)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.xlabel(r'$H_0$ (km s$^{-1}$ Mpc$^{-1}$)',fontsize=16)
+plt.ylabel(r'$p(H_0)$ (km$^{-1}$ s Mpc)', fontsize=16)
+plt.legend(loc='upper right',fontsize=10)
+plt.tight_layout()
+plt.savefig(outputfile+'.pdf',dpi=200)

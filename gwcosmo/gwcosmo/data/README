@@ -1,0 +1,26 @@
+O1:
+    L1: gwcosmo/gwcosmo/data/L1_O1_strain.txt
+    H1: gwcosmo/gwcosmo/data/H1_O1_strain.txt
+O2: 
+    L1: gwcosmo/gwcosmo/data/L1_O2_strain.txt
+    H1: gwcosmo/gwcosmo/data/H1_O2_strain.txt
+    V1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/Scripts/Figure1/data/avirgo_O2.txt
+O3:
+    L1: https://dcc.ligo.org/LIGO-G1900992
+    H1: https://dcc.ligo.org/LIGO-G1900993
+    V1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/avirgo_O3actual.txt
+    
+O4low:
+    L1 and H1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/aligo_O4low.txt
+    V1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/avirgo_O4low_NEW.txt
+    KAGRA: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/kagra_25Mpc.txt
+    
+O4high:
+    L1 and H1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/aligo_O4high.txt 
+    V1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/avirgo_O4high_NEW.txt
+    KAGRA: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/kagra_80Mpc.txt
+    
+O5(A+):
+    L1 and H1: https://dcc.ligo.org/DocDB/0149/T1800042/005/AplusDesign.txt
+    V1: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/Scripts/Figure1/data/avirgo_O5high_NEW.txt
+    KAGRA: https://git.ligo.org/publications/detectors/obs-scenarios-2019/blob/master/CurvesForSimulation/kagra_128Mpc.txt

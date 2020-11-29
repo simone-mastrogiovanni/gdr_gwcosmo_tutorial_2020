@@ -1,0 +1,20 @@
+---
+image: ligo/publisher:latest
+
+publish:
+  before_script:
+        - echo $CI_COMMIT_SHA | cut -b1-8 > docs/latex/gitID.txt
+  script:
+        - cd docs/latex
+        - make gwcosmo_method.pdf
+        - cd ..
+  after_script:
+        - rm docs/latex/gitID.txt
+  cache:
+    key: "$CI_PROJECT_NAMESPACE-$CI_PROJECT_NAME-$CI_JOB_NAME"
+    untracked: true
+  artifacts:
+    expire_in: 4w
+    paths:
+        - docs/latex/gwcosmo_method.pdf
+

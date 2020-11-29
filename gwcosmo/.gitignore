@@ -1,0 +1,13 @@
+*~
+*.egg-info
+*.pyc
+*.DS_Store
+__pycache__
+.eggs
+.cache
+.coverage*
+.pytest_cache
+build
+dist
+htmlcov
+.ipynb_checkpoints

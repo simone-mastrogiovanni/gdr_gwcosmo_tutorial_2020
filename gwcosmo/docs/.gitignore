@@ -1,0 +1,8 @@
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+gwcosmo_method.synctex.gz
+gwcosmo_method.pdf
+

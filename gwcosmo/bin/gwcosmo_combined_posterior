@@ -1,0 +1,146 @@
+#!/usr/bin/env python
+"""
+This script combines individual H0 posteriors.
+Ignacio Magana
+"""
+# System imports
+import os
+import sys
+from optparse import Option, OptionParser
+
+#Global Imports
+import matplotlib 
+matplotlib.use('agg')
+import matplotlib.pyplot as plt
+matplotlib.rcParams['font.family']= 'Times New Roman'
+matplotlib.rcParams['font.sans-serif']= ['Bitstream Vera Sans']
+matplotlib.rcParams['text.usetex']= True
+matplotlib.rcParams['mathtext.fontset']= 'stixsans'
+
+import seaborn as sns
+sns.set_context('paper')
+sns.set_style('ticks')
+sns.set_palette('colorblind')
+
+import numpy as np
+import gwcosmo
+from gwcosmo.utilities.posterior_utilities import confidence_interval
+
+# Command line options
+parser = OptionParser(
+    description = __doc__,
+    usage = "%prog [options]",
+    option_list = [
+        Option("-d", "--dir", metavar="DIR", default=None,
+            help="DIR: Directory to .npz gwcosmo_single_posterior files to be combined. (required)"),
+        Option("-b", "--outputfile", metavar="OUTPUTFILE", default='Posterior_mdc',
+            help="OUTPUTFILE: Name of output file")
+    ])
+opts, args = parser.parse_args()
+
+# Check for missing required arguments
+missing = []
+for option in parser.option_list:
+    if 'required' in option.help and eval('opts.' + option.dest) == None:
+        missing.extend(option._long_opts)
+if len(missing) > 0:
+    parser.error('Missing required options: {0}'.format(str(missing)))
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+dir = str(opts.dir)
+
+dir_list = []
+for path, subdirs, files in os.walk(dir):
+    for name in files:
+        filepath = os.path.join(path, name)
+        if filepath[-4:] == '.npz':
+            dir_list.append(filepath)
+            
+
+outputfile = str(opts.outputfile)
+
+"Compute combined P(H0)"
+
+Nevents = len(dir_list)
+
+H0 = np.load(dir_list[0])['arr_0'][0]
+min_H0 = H0[0]
+max_H0 = H0[-1]
+dH0 = H0[1] - H0[0]
+
+prior_log = 1./H0
+prior_uniform = np.ones(len(H0))
+
+likelihoods=[]
+for path in dir_list:
+    likelihoods.append(np.load(path)['arr_0'][1])
+
+likelihood_comb = np.ones(H0.size)
+likelihood_comb_list = []
+for k in range(Nevents):
+    likelihood_comb *= likelihoods[k]
+    likelihood_comb = likelihood_comb/np.sum(likelihood_comb) #normalise within loop, else will go to 0.
+    likelihood_comb_list.append(likelihood_comb)
+
+posterior_uniform = prior_uniform*likelihood_comb
+posterior_uniform_norm = posterior_uniform/np.sum(posterior_uniform*dH0)
+prior_uniform_norm = prior_uniform/np.sum(prior_uniform*dH0)
+
+posterior_log = prior_log*likelihood_comb
+posterior_log_norm = posterior_log/np.sum(posterior_log*dH0)
+prior_log_norm = prior_log/np.sum(prior_log*dH0)
+
+print("Uniform Prior")
+confidence_uniform = confidence_interval(posterior_uniform_norm,H0,level=0.683,verbose=True)
+MAP_uniform = confidence_uniform.map
+a_uniform = confidence_uniform.lower_level
+b_uniform = confidence_uniform.upper_level
+
+print("Log Prior")
+confidence_log = confidence_interval(posterior_log_norm,H0,level=0.683)
+MAP_log = confidence_log.map
+a_log = confidence_log.lower_level
+b_log = confidence_log.upper_level
+
+ymin = 0
+ymax = 1.1*max(posterior_log_norm)
+planck_h = 0.6774*100
+sigma_planck_h = 0.0062*100
+riess_h = 0.7324*100
+sigma_riess_h = 0.0174*100
+
+c=sns.color_palette('colorblind')
+plt.figure()
+plt.axvline(planck_h,label='Planck',color=c[4])
+plt.fill_betweenx([ymin,ymax],planck_h-2*sigma_planck_h,planck_h+2*sigma_planck_h,color=c[4],alpha=0.2)
+plt.axvline(riess_h,label='SH0ES',color=c[2])
+plt.fill_betweenx([ymin,ymax],riess_h-2*sigma_riess_h,riess_h+2*sigma_riess_h,color=c[2],alpha=0.2)
+plt.axvline(70,ls='--', color='k',alpha=0.8, label = r'$H_0 = 70$ (km s$^{-1}$ Mpc$^{-1}$)')
+plt.plot(H0,posterior_uniform_norm, linewidth = 3.0, label='Posterior (Uniform)',c=c[0])
+plt.axvline(a_uniform,ls='--',c=c[0])
+plt.axvline(b_uniform,ls='--',c=c[0])
+plt.plot(H0,posterior_log_norm,linewidth = 3.0, label='Posterior (Log)',c=c[1])
+plt.axvline(a_log,ls='--',c=c[1])
+plt.axvline(b_log,ls='--',c=c[1])
+plt.plot(H0,prior_uniform_norm,ls=':', linewidth = 3.0, label='Prior (Uniform)',c=c[0],alpha=0.6)
+plt.plot(H0,prior_log_norm,ls=':', linewidth = 3.0, label='Prior (Log)',c=c[1],alpha=0.6)
+for n in range(Nevents):
+    plt.plot(H0,likelihoods[n], linewidth = 3.0, alpha = 0.3)
+plt.xlim(min_H0,max_H0)
+plt.ylim(ymin,ymax)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.xlabel(r'$H_0$ (km s$^{-1}$ Mpc$^{-1}$)',fontsize=16)
+plt.ylabel(r'$p(H_0)$ (km$^{-1}$ s Mpc)', fontsize=16)
+plt.legend(loc='upper right',fontsize=10)
+plt.tight_layout()
+plt.savefig('./'+outputfile+'.png',dpi=800)
+
+np.savez('./'+outputfile+'.npz',[H0,likelihood_comb,posterior_uniform_norm,posterior_log_norm])
